@@ -1,0 +1,53 @@
+//@version=5
+indicator("Fractal Quarterly Macro Model with Time Doubling", overlay=true)
+
+// === Inputs ===
+modelType = input.string("AMDX", title="Cycle Model", options=["AMDX", "XAMD"])
+baseMultiplier = input.int(10, title="Float Multiplier (minutes)", minval=1)
+rootOffset = input.int(0, title="Root Bar Offset")
+showLabels = input.bool(true, title="Show Macro Labels")
+
+// Base cycle length measured in bars
+baseBars = int(baseMultiplier)
+rootIndex = bar_index - rootOffset
+
+// === Helper Functions ===
+getPhase(idx) =>
+    phase = math.floor((idx - rootIndex) / baseBars) % 4
+    phase
+
+getPhaseColor(phase) =>
+    phase == 0 ? color.new(color.green, 80) :
+     phase == 1 ? color.new(color.orange, 80) :
+     phase == 2 ? color.new(color.red, 80) :
+     color.new(color.blue, 80)
+
+phaseName(phase) =>
+    modelType == "AMDX" ?
+        (phase == 0 ? "A" : phase == 1 ? "M" : phase == 2 ? "D" : "X") :
+        (phase == 0 ? "X" : phase == 1 ? "A" : phase == 2 ? "M" : "D")
+
+macroLabel(idx, name) =>
+    if showLabels and bar_index == idx
+        label.new(bar_index, high, name, color=color.black, style=label.style_label_down, textcolor=color.white)
+
+// === Plotting Phases ===
+var lastPhase = -1
+phase = getPhase(bar_index)
+if phase != lastPhase
+    bgcolor(getPhaseColor(phase))
+    lastPhase := phase
+
+// === Time Doubling Markers ===
+for mult in array.from(1,2,4,8,16)
+    target = rootIndex + baseBars * mult
+    if bar_index == target
+        line.new(x1=target, x2=target, y1=low, y2=high*1.02, color=color.yellow, width=1)
+        macroName = mult <= 2 ? "Base" : mult <= 4 ? "3-Swing" : "Significant"
+        macroLabel(target, macroName)
+
+// === Entry Signal Example ===
+longCondition = crossover(phase, 0) // entering new Accumulation
+shortCondition = crossunder(phase, 2) // leaving Distribution
+plotshape(longCondition, location=location.belowbar, color=color.green, style=shape.triangleup, title="Long")
+plotshape(shortCondition, location=location.abovebar, color=color.red, style=shape.triangledown, title="Short")
