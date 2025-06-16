@@ -1,0 +1,70 @@
+//@version=5
+indicator('Quarterly Flow Indicator', overlay=true)
+
+// === Inputs ===
+baseBars = input.int(50, 'Phase Length (bars)')
+showTimeDoubling = input.bool(true, 'Show Time Doubling Lines')
+
+// === Phase Calculation ===
+phaseIndex = math.floor(bar_index / baseBars) % 4
+
+var color[] phaseColors = array.from(
+    color.new(color.green, 85), // A
+    color.new(color.orange, 85), // M
+    color.new(color.red, 85), // D
+    color.new(color.blue, 85) // X
+)
+var string[] phaseLabels = array.from('A', 'M', 'D', 'X')
+
+bgcolor(array.get(phaseColors, phaseIndex))
+
+// Label current phase once per bar
+if barstate.islast
+    label.new(bar_index, high, array.get(phaseLabels, phaseIndex),
+              style=label.style_label_down, color=color.gray, textcolor=color.white)
+
+// === Time Doubling ===
+var int rootTime = time[0]
+var line[] tdLines = array.new<line>()
+
+// Determine timeframe in minutes
+var float tfMinutes = timeframe.in_seconds(timeframe.period) / 60
+baseMinutes = 10 * tfMinutes
+
+if showTimeDoubling and (time - rootTime) % (baseMinutes * 60000) == 0
+    mult = math.round((time - rootTime) / (baseMinutes * 60000))
+    var string labelText = switch mult
+        1 => 'Base'
+        2 => 'Base'
+        4 => '3-Swing'
+        8 => 'Significant'
+        16 => 'Significant'
+        => ''
+    if labelText != ''
+        array.push(tdLines, line.new(bar_index, low, bar_index, high, color=color.yellow))
+        label.new(bar_index, high, labelText, style=label.style_label_down, color=color.yellow, textcolor=color.black)
+
+// === Time Elapsed Tracker ===
+if bar_index % baseBars == 0
+    float mins = (time - rootTime) / 60000.0
+    label.new(bar_index, low, str.tostring(mins) + 'm / ' + str.tostring(mins/60.0, '#.##') + 'h',
+              style=label.style_label_up, color=color.gray, textcolor=color.white)
+
+// === Persistent HH/LL Tracker ===
+var float globalHigh = high
+var float globalLow = low
+
+if high > globalHigh
+    globalHigh := high
+    plotshape(true, style=shape.circle, location=location.abovebar, color=color.lime, size=size.tiny)
+
+if low < globalLow
+    globalLow := low
+    plotshape(true, style=shape.circle, location=location.belowbar, color=color.maroon, size=size.tiny)
+
+// === Entry Signals ===
+longSignal = ta.crossover(phaseIndex, 0)
+shortSignal = ta.crossunder(phaseIndex, 2)
+
+plotshape(longSignal, style=shape.triangleup, color=color.green, location=location.belowbar, size=size.small)
+plotshape(shortSignal, style=shape.triangledown, color=color.red, location=location.abovebar, size=size.small)
