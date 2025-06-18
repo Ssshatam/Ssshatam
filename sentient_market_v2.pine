@@ -1,5 +1,5 @@
 //@version=5
-indicator('Sentient Market V2.1', overlay=true)
+indicator('Sentient Market V2.2', overlay=true)
 
 // === INPUT SETTINGS ===
 // HTF Macros
@@ -87,6 +87,9 @@ f_in_time_range(ch, cm, sh, sm, eh, em) =>
     st = sh * 60 + sm
     et = eh * 60 + em
     et >= st ? ct >= st and ct <= et : ct >= st or ct <= et
+f_in_second_range(cs, ss, es) =>
+    es >= ss ? cs >= ss and cs <= es : cs >= ss or cs <= es
+
 
 f_draw_box() =>
     box.new(win_start, win_high, win_end, win_low, bgcolor=cur_box, border_color=cur_border)
@@ -127,12 +130,18 @@ if enable_m5 and f_should_show('M5') and not active
             break
 
 if enable_m15 and f_should_show('M15') and not active
-    q = now_m % 15
-    if (q == 14 and now_s >= 30) or (q == 0 and now_s <= 30) or (q >= 1 and q <= 2)
-        active := true
-        m_name := 'M15'
-        box_col := m15_box_color
-        border  := m15_border
+    sec_now = now_m * 60 + now_s
+    quarters = array.from(0, 900, 1800, 2700)
+    for i = 0 to array.size(quarters)-1
+        q = array.get(quarters, i)
+        start_sec = math.mod(q - 150 + 3600, 3600)
+        end_sec   = math.mod(q + 120, 3600)
+        if f_in_second_range(sec_now, start_sec, end_sec)
+            active := true
+            m_name := 'M15'
+            box_col := m15_box_color
+            border  := m15_border
+            break
 
 if enable_hourly and f_should_show('H1') and not active
     if now_m >= 50 or now_m <= 10
