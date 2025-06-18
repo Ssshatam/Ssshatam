@@ -1,0 +1,223 @@
+//@version=5
+indicator('Sentient Market V2.2', overlay=true)
+
+// === INPUT SETTINGS ===
+// HTF Macros
+enable_hourly = input.bool(true, 'Enable Hourly Macro (20min)', group='HTF Macros')
+enable_h4     = input.bool(false, 'Enable H4 Macro (80min)', group='HTF Macros')
+enable_daily  = input.bool(false, 'Enable Daily Macro (8hrs)', group='HTF Macros')
+enable_weekly = input.bool(false, 'Enable Weekly Macro (40hrs)', group='HTF Macros')
+
+// LTF Macros
+enable_m5  = input.bool(false, 'Enable M5 Macro (1m40s)', group='LTF Macros')
+enable_m15 = input.bool(false, 'Enable M15 Macro (5min)',  group='LTF Macros')
+
+// HTF Colors
+hourly_box_color  = input.color(color.new(color.blue,   85), 'Hourly Box', group='HTF Colors')
+hourly_border     = input.color(color.new(color.blue,   30), 'Hourly Border', group='HTF Colors')
+h4_box_color      = input.color(color.new(color.purple, 85), 'H4 Box', group='HTF Colors')
+h4_border         = input.color(color.new(color.purple, 30), 'H4 Border', group='HTF Colors')
+daily_box_color   = input.color(color.new(color.orange, 85), 'Daily Box', group='HTF Colors')
+daily_border      = input.color(color.new(color.orange, 30), 'Daily Border', group='HTF Colors')
+weekly_box_color  = input.color(color.new(color.red,    85), 'Weekly Box', group='HTF Colors')
+weekly_border     = input.color(color.new(color.red,    30), 'Weekly Border', group='HTF Colors')
+
+// LTF Colors
+m5_box_color   = input.color(color.new(color.green,  85), 'M5 Box', group='LTF Colors')
+m5_border      = input.color(color.new(color.green,  30), 'M5 Border', group='LTF Colors')
+m15_box_color  = input.color(color.new(color.yellow, 85), 'M15 Box', group='LTF Colors')
+m15_border     = input.color(color.new(color.yellow, 30), 'M15 Border', group='LTF Colors')
+
+// Liquidity
+show_liquidity   = input.bool(true,  'Show Liquidity Lines', group='Liquidity')
+line_style_solid = input.bool(false, 'Solid Lines (unchecked=dashed)', group='Liquidity')
+buy_liq_color    = input.color(color.rgb(4, 37, 250),   'Buy Liquidity',  group='Liquidity')
+sell_liq_color   = input.color(color.rgb(153, 16, 16),  'Sell Liquidity', group='Liquidity')
+max_liq_levels   = input.int(5, 'Maximum Liquidity Levels', minval=1, maxval=10, group='Liquidity')
+
+// === UTILS ===
+f_tf_in_minutes() =>
+    t = timeframe.period
+    if str.contains(t, 'S')
+        str.tonumber(str.replace(t, 'S', '')) / 60
+    else if str.contains(t, 'D')
+        str.tonumber(str.replace(t, 'D', '')) * 1440
+    else if str.contains(t, 'W')
+        str.tonumber(str.replace(t, 'W', '')) * 10080
+    else if str.contains(t, 'M')
+        str.tonumber(str.replace(t, 'M', '')) * 43200
+    else
+        str.tonumber(t)
+
+cur_tf = f_tf_in_minutes()
+
+f_should_show(type) =>
+    switch type
+        'M5'  => cur_tf <= 1
+        'M15' => cur_tf <= 1
+        'H1'  => cur_tf <= 1
+        'H4'  => cur_tf == 5
+        'D1'  => cur_tf == 15
+        'W1'  => cur_tf == 60
+        => false
+
+// === STATE ===
+var buy_lines  = array.new<line>()
+var sell_lines = array.new<line>()
+var float win_high = na
+var float win_low  = na
+var int   win_start = na
+var int   win_end   = na
+var bool  in_win    = false
+var string cur_macro = ''
+var color cur_box    = na
+var color cur_border = na
+
+// === HELPERS ===
+f_trim_lines(arr) =>
+    while array.size(arr) > max_liq_levels
+        l = array.shift(arr)
+        line.delete(l)
+
+f_liq_swept(level, is_buy) =>
+    is_buy ? high > level : low < level
+
+f_in_time_range(ch, cm, sh, sm, eh, em) =>
+    ct = ch * 60 + cm
+    st = sh * 60 + sm
+    et = eh * 60 + em
+    et >= st ? ct >= st and ct <= et : ct >= st or ct <= et
+f_in_second_range(cs, ss, es) =>
+    es >= ss ? cs >= ss and cs <= es : cs >= ss or cs <= es
+
+
+f_draw_box() =>
+    box.new(win_start, win_high, win_end, win_low, bgcolor=cur_box, border_color=cur_border)
+    if not na(win_start) and not na(win_end)
+        mid = math.round((win_start + win_end) / 2)
+        lbl_y = win_high + (win_high - win_low) * 0.02
+        label.new(mid, lbl_y, cur_macro, color=color.new(color.white, 100), textcolor=cur_border, style=label.style_label_down)
+    if show_liquidity
+        f_trim_lines(buy_lines)
+        f_trim_lines(sell_lines)
+        style = line_style_solid ? line.style_solid : line.style_dashed
+        bl = line.new(bar_index, win_high, bar_index + 10, win_high, color=buy_liq_color, style=style)
+        array.push(buy_lines, bl)
+        sl = line.new(bar_index, win_low, bar_index + 10, win_low, color=sell_liq_color, style=style)
+        array.push(sell_lines, sl)
+
+// === MAIN LOGIC ===
+now_h = hour(time)
+now_m = minute(time)
+now_s = second(time)
+now_d = dayofweek(time)
+
+active  = false
+m_name  = ''
+box_col = color.new(color.gray, 90)
+border  = color.new(color.black, 34)
+
+if enable_m5 and f_should_show('M5') and not active
+    targets = array.from(0,5,10,15,20,25,30,35,40,45,50,55)
+    for idx = 0 to array.size(targets)-1
+        t = array.get(targets, idx)
+        prev = t == 0 ? 59 : t - 1
+        if (now_m == prev and now_s >= 10) or (now_m == t and now_s <= 50)
+            active := true
+            m_name := 'M5'
+            box_col := m5_box_color
+            border  := m5_border
+            break
+
+if enable_m15 and f_should_show('M15') and not active
+    sec_now = now_m * 60 + now_s
+    quarters = array.from(0, 900, 1800, 2700)
+    for i = 0 to array.size(quarters)-1
+        q = array.get(quarters, i)
+        start_sec = math.mod(q - 150 + 3600, 3600)
+        end_sec   = math.mod(q + 120, 3600)
+        if f_in_second_range(sec_now, start_sec, end_sec)
+            active := true
+            m_name := 'M15'
+            box_col := m15_box_color
+            border  := m15_border
+            break
+
+if enable_hourly and f_should_show('H1') and not active
+    if now_m >= 50 or now_m <= 10
+        active := true
+        m_name := 'H1'
+        box_col := hourly_box_color
+        border  := hourly_border
+
+if enable_h4 and f_should_show('H4') and not active
+    h4_active =
+         f_in_time_range(now_h, now_m, 0, 20, 1, 40) or
+         f_in_time_range(now_h, now_m, 4, 20, 5, 40) or
+         f_in_time_range(now_h, now_m, 8, 20, 9, 40) or
+         f_in_time_range(now_h, now_m, 12, 20, 13, 40) or
+         f_in_time_range(now_h, now_m, 16, 20, 17, 40) or
+         f_in_time_range(now_h, now_m, 20, 20, 21, 40)
+    if h4_active
+        active := true
+        m_name := 'H4'
+        box_col := h4_box_color
+        border  := h4_border
+
+if enable_daily and f_should_show('D1') and not active
+    if f_in_time_range(now_h, now_m, 13, 0, 21, 0)
+        active := true
+        m_name := 'D1'
+        box_col := daily_box_color
+        border  := daily_border
+
+if enable_weekly and f_should_show('W1') and not active
+    cond = (now_d == dayofweek.monday and now_h >= 13) or (now_d == dayofweek.tuesday) or (now_d == dayofweek.wednesday and now_h <= 5)
+    if cond
+        active := true
+        m_name := 'W1'
+        box_col := weekly_box_color
+        border  := weekly_border
+
+if active and (not in_win or cur_macro != m_name)
+    win_high  := high
+    win_low   := low
+    win_start := bar_index
+    win_end   := na
+    in_win    := true
+    cur_macro := m_name
+    cur_box   := box_col
+    cur_border:= border
+
+if active and in_win and cur_macro == m_name
+    win_high := math.max(nz(win_high, high), high)
+    win_low  := math.min(nz(win_low, low), low)
+    win_end  := bar_index
+
+if not active and in_win
+    if not na(win_start) and not na(win_end)
+        f_draw_box()
+    in_win    := false
+    win_high  := na
+    win_low   := na
+    win_start := na
+    win_end   := na
+    cur_macro := ''
+    cur_box   := na
+    cur_border:= na
+
+if show_liquidity
+    if array.size(buy_lines) > 0
+        for i = array.size(buy_lines)-1 to 0
+            l = array.get(buy_lines, i)
+            p = line.get_y1(l)
+            if f_liq_swept(p, true)
+                line.delete(l)
+                array.remove(buy_lines, i)
+    if array.size(sell_lines) > 0
+        for i = array.size(sell_lines)-1 to 0
+            l = array.get(sell_lines, i)
+            p = line.get_y1(l)
+            if f_liq_swept(p, false)
+                line.delete(l)
+                array.remove(sell_lines, i)
